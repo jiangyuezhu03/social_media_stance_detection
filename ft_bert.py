@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
 torch.set_num_threads(12)
-import os
-os.environ["OMP_NUM_THREADS"] = "12"
-os.environ["MKL_NUM_THREADS"] = "12"
 from transformers import DataCollatorWithPadding
 
 from transformers import (
@@ -19,6 +16,10 @@ from transformers import (
 from custom_encoder import BertForStance3Way
 from sklearn.metrics import accuracy_score, f1_score
 import numpy as np
+import os,sys
+model_save_name=sys.argv[1]
+output_dir = f"models/{model_save_name}"
+log_dir = "./logs"
 
 model_path = "models/stance_ch"
 tokenizer = BertTokenizer.from_pretrained(model_path)
@@ -37,14 +38,31 @@ model.bert.load_state_dict(old_model.bert.state_dict())
 
 # Load data
 from datasets import load_from_disk
-dataset = load_from_disk("c-stance_entertainment")
+ds_path=sys.argv[2] if len(sys.argv)>2 else "c-stance_entertainment"
+dataset = load_from_disk(ds_path)
 
+#第一个模型，固定长度padding
 # Process dataset
 # def tokenize_fn(batch):
 #     return tokenizer(
 #         batch["target"],
 #         batch["text"],
 #         truncation=True,
+#         padding="max_length",
+#         max_length=196
+#     )
+#
+# encoded_dataset = dataset.map(tokenize_fn, batched=True)
+# encoded_dataset = encoded_dataset.rename_column("label", "labels")
+# encoded_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "token_type_ids", "labels"])
+
+# 第二个模型，dynamic padding 但是padding都加在后面
+# Process dataset
+# def tokenize_fn(batch):
+#     return tokenizer(
+#         batch["target"],
+#         batch["text"],
+#         truncation="longest_first",
 #         padding=False,
 #         max_length=512
 #     )
@@ -53,6 +71,7 @@ dataset = load_from_disk("c-stance_entertainment")
 # encoded_dataset = encoded_dataset.rename_column("label", "labels")
 # encoded_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "token_type_ids", "labels"])
 
+# 第三个模型，padding分别加到post和comment后面
 MAX_TARGET_LEN = 128
 MAX_TEXT_LEN = 196
 
@@ -87,9 +106,6 @@ def tokenize_fn(batch):
 
 encoded_dataset = dataset.map(tokenize_fn, batched=True)
 
-import os
-output_dir = "models/stance_model_3way_sep_pad"
-log_dir = "./logs"
 
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
@@ -110,11 +126,11 @@ training_args = TrainingArguments(
     output_dir=output_dir,
     eval_strategy="epoch",
     save_strategy="epoch",
-    learning_rate=2e-5,
+    learning_rate=5e-06, #used to be 2e-05
     per_device_train_batch_size=16,
     per_device_eval_batch_size=16,
-    gradient_accumulation_steps=4,
-    num_train_epochs=4,
+    # gradient_accumulation_steps=4,
+    num_train_epochs=8,
     weight_decay=0.01,
     warmup_ratio=0.1,
     logging_dir=log_dir,
@@ -139,6 +155,9 @@ trainer = Trainer(
     callbacks=[EarlyStoppingCallback(early_stopping_patience=3)]
 )
 
+# train_dataloader = trainer.get_train_dataloader()
+# print(f"Train batches: {len(train_dataloader)}")
+# import pdb;pdb.set_trace()
 
 trainer.train()
 
